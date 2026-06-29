@@ -1,0 +1,359 @@
+/* 🪞 画出对称的另一半 —— 给出对称轴和图形的一半，孩子在格子纸上画出镜像的另一半。
+ *
+ * 思路：
+ *  - 图形由「格点之间的单位线段」组成（横/竖/斜，8 个方向）。
+ *  - 出题：在对称轴的一侧随机走一条折线（题目的一半），它关于轴的镜像就是标准答案。
+ *  - 判定：孩子画的线段集合 == 题目一半的镜像集合（不多不少）。
+ */
+(() => {
+  "use strict";
+
+  const COLS = 10, ROWS = 8;   // 格子数（格点为 (COLS+1)×(ROWS+1)）
+  const CS = 38, PAD = 22;     // 每格像素、外边距
+  const AX = 5, AY = 4;        // 竖/横轴位置
+  const DC1 = -1, DC2 = 9;     // 斜轴：y=x+DC1（过中心）、x+y=DC2（过中心）
+  const SNAP = CS * 0.42;      // 画线时吸附到格点的距离阈值
+
+  const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const $ = (id) => document.getElementById(id);
+  const board = $("board");
+  const boardCard = $("boardCard");
+  const statusEl = $("status");
+  const axisSel = $("axisSel");
+  const diffSel = $("diffSel");
+
+  let svg, gGhost, gKid;        // 关键 svg 图层
+  let axis = null;              // 当前对称轴
+  let givenSet = new Set();     // 题目给出的一半
+  let requiredSet = new Set();  // 标准答案（镜像）
+  let kidSet = new Set();       // 孩子已画
+  let kidOrder = [];            // 画线顺序（用于撤销）
+  let painting = false, lastPt = null;
+  let ghostTimer = 0;
+
+  const el = (name, attrs) => {
+    const n = document.createElementNS(SVGNS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  };
+  const px = (x) => PAD + x * CS;
+  const py = (y) => PAD + y * CS;
+  const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const shuffle = (arr) => { for (let i = arr.length - 1; i > 0; i--) { const j = randInt(0, i); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; };
+
+  // ---------- 坐标 / 线段 ----------
+  const pStr = (p) => p[0] + "," + p[1];
+  function segKey(a, b) {
+    const ka = pStr(a), kb = pStr(b);
+    return ka < kb ? ka + "|" + kb : kb + "|" + ka;
+  }
+  function parseSeg(key) {
+    const [pa, pb] = key.split("|");
+    return [pa.split(",").map(Number), pb.split(",").map(Number)];
+  }
+  const inBounds = ([x, y]) => x >= 0 && x <= COLS && y >= 0 && y <= ROWS;
+
+  // ---------- 对称轴 ----------
+  function makeAxis(type) {
+    if (type === "v") return {
+      type, reflect: ([x, y]) => [2 * AX - x, y], dist: ([x, y]) => x - AX,
+      line: () => [[AX, 0], [AX, ROWS]], label: ["竖直对称轴", AX, 0],
+    };
+    if (type === "h") return {
+      type, reflect: ([x, y]) => [x, 2 * AY - y], dist: ([x, y]) => y - AY,
+      line: () => [[0, AY], [COLS, AY]], label: ["水平对称轴", 0, AY],
+    };
+    if (type === "d1") { // y = x + DC1
+      const C = DC1;
+      const xa = Math.max(0, -C), xb = Math.min(COLS, ROWS - C);
+      return {
+        type, reflect: ([x, y]) => [y - C, x + C], dist: ([x, y]) => y - x - C,
+        line: () => [[xa, xa + C], [xb, xb + C]], label: null,
+      };
+    }
+    // d2: x + y = DC2
+    const C = DC2;
+    const xa = Math.max(0, C - ROWS), xb = Math.min(COLS, C);
+    return {
+      type, reflect: ([x, y]) => [C - y, C - x], dist: ([x, y]) => x + y - C,
+      line: () => [[xa, C - xa], [xb, C - xb]], label: null,
+    };
+  }
+
+  function pickStart(ax) {
+    for (let i = 0; i < 200; i++) {
+      const p = [randInt(0, COLS), randInt(0, ROWS)];
+      const d = ax.dist(p);
+      if (d <= 0 && d >= -3 && inBounds(ax.reflect(p))) return p;
+    }
+    return [AX, AY]; // 兜底
+  }
+
+  // ---------- 出题 ----------
+  function generate(axisChoice, steps) {
+    let type;
+    if (axisChoice === "v" || axisChoice === "h") type = axisChoice;
+    else if (axisChoice === "diag") type = Math.random() < 0.5 ? "d1" : "d2";
+    else type = ["v", "h", "d1", "d2"][randInt(0, 3)];
+
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const ax = makeAxis(type);
+      const segs = new Set();
+      let p = pickStart(ax);
+      let guard = 0;
+      while (segs.size < steps && guard < steps * 8) {
+        guard++;
+        let moved = false;
+        for (const [dx, dy] of shuffle(DIRS8.slice())) {
+          const q = [p[0] + dx, p[1] + dy];
+          if (!inBounds(q) || ax.dist(q) > 0) continue;
+          if (Math.min(ax.dist(p), ax.dist(q)) >= 0) continue;       // 不要落在轴上的线段
+          const rp = ax.reflect(p), rq = ax.reflect(q);
+          if (!inBounds(rp) || !inBounds(rq)) continue;
+          const k = segKey(p, q);
+          if (segs.has(k)) continue;
+          segs.add(k); p = q; moved = true; break;
+        }
+        if (!moved) { // 卡住，跳到已有的某个端点继续
+          const pts = [...segs].flatMap(parseSeg);
+          if (!pts.length) break;
+          p = pts[randInt(0, pts.length - 1)];
+        }
+      }
+      if (segs.size >= Math.max(3, steps - 2)) {
+        const required = new Set([...segs].map((k) => {
+          const [a, b] = parseSeg(k);
+          return segKey(ax.reflect(a), ax.reflect(b));
+        }));
+        return { axis: ax, given: [...segs], required };
+      }
+    }
+    // 兜底：竖轴上的一个小三角
+    const ax = makeAxis("v");
+    const g = [segKey([5, 2], [3, 2]), segKey([3, 2], [3, 5]), segKey([3, 5], [5, 5])];
+    const required = new Set(g.map((k) => { const [a, b] = parseSeg(k); return segKey(ax.reflect(a), ax.reflect(b)); }));
+    return { axis: ax, given: g, required };
+  }
+
+  // ---------- 渲染 ----------
+  function buildBoard() {
+    board.innerHTML = "";
+    const w = COLS * CS + 2 * PAD, h = ROWS * CS + 2 * PAD;
+    svg = el("svg", { viewBox: `0 0 ${w} ${h}`, role: "img" });
+
+    // 背景
+    svg.appendChild(el("rect", { x: 0, y: 0, width: w, height: h, rx: 10, fill: "#fff" }));
+
+    // 格子纸
+    const gGrid = el("g", {});
+    for (let x = 0; x <= COLS; x++) {
+      const c = el("line", { x1: px(x), y1: py(0), x2: px(x), y2: py(ROWS), class: "grid-line" });
+      if (x === 0 || x === COLS) c.classList.add("edge");
+      gGrid.appendChild(c);
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      const c = el("line", { x1: px(0), y1: py(y), x2: px(COLS), y2: py(y), class: "grid-line" });
+      if (y === 0 || y === ROWS) c.classList.add("edge");
+      gGrid.appendChild(c);
+    }
+    svg.appendChild(gGrid);
+
+    // 对称轴
+    const [la, lb] = axis.line();
+    svg.appendChild(el("line", { x1: px(la[0]), y1: py(la[1]), x2: px(lb[0]), y2: py(lb[1]), class: "axis-line" }));
+
+    // 格点
+    const gDots = el("g", {});
+    for (let x = 0; x <= COLS; x++)
+      for (let y = 0; y <= ROWS; y++)
+        gDots.appendChild(el("circle", { cx: px(x), cy: py(y), r: 2.6, class: "dot" }));
+    svg.appendChild(gDots);
+
+    // 题目（给定一半）
+    const gGiven = el("g", {});
+    for (const k of givenSet) {
+      const [a, b] = parseSeg(k);
+      gGiven.appendChild(el("line", { x1: px(a[0]), y1: py(a[1]), x2: px(b[0]), y2: py(b[1]), class: "seg-given" }));
+    }
+    svg.appendChild(gGiven);
+
+    gGhost = el("g", {}); svg.appendChild(gGhost);   // 提示层
+    gKid = el("g", {}); svg.appendChild(gKid);       // 孩子画的
+
+    // 对称轴文字提示
+    const labelText = axis.type === "v" ? "← 镜子 →"
+      : axis.type === "h" ? "↑ 镜子 ↓" : "镜子";
+    const lblPos = axis.type === "h"
+      ? [px(COLS) - 6, py(AY) - 8, "end"]
+      : [px(axis.type === "v" ? AX : la[0]) + 6, py(0) + 14, "start"];
+    const lbl = el("text", { x: lblPos[0], y: lblPos[1], class: "axis-label", "text-anchor": lblPos[2] });
+    lbl.textContent = labelText;
+    svg.appendChild(lbl);
+
+    board.appendChild(svg);
+    bindDrawing();
+    renderKid();
+  }
+
+  function renderKid() {
+    while (gKid.firstChild) gKid.removeChild(gKid.firstChild);
+    for (const k of kidOrder) {
+      const [a, b] = parseSeg(k);
+      const cls = requiredSet.has(k) ? "seg-ok" : "seg-bad";
+      gKid.appendChild(el("line", { x1: px(a[0]), y1: py(a[1]), x2: px(b[0]), y2: py(b[1]), class: cls }));
+      const hit = el("line", { x1: px(a[0]), y1: py(a[1]), x2: px(b[0]), y2: py(b[1]), class: "seg-hit" });
+      hit.dataset.key = k;
+      gKid.appendChild(hit);
+    }
+  }
+
+  // ---------- 交互 ----------
+  function svgPoint(clientX, clientY) {
+    const pt = svg.createSVGPoint();
+    pt.x = clientX; pt.y = clientY;
+    const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return loc;
+  }
+  // 返回离指针最近的格点及其距离（格点已限制在网格内）
+  function nearestDotInfo(clientX, clientY) {
+    const loc = svgPoint(clientX, clientY);
+    let gx = Math.round((loc.x - PAD) / CS);
+    let gy = Math.round((loc.y - PAD) / CS);
+    if (gx < 0 || gx > COLS || gy < 0 || gy > ROWS) return null;
+    const dist = Math.hypot(loc.x - px(gx), loc.y - py(gy));
+    return { pt: [gx, gy], dist };
+  }
+  const adjacent = (a, b) => {
+    const dx = Math.abs(a[0] - b[0]), dy = Math.abs(a[1] - b[1]);
+    return Math.max(dx, dy) === 1;
+  };
+
+  function addSeg(a, b) {
+    const k = segKey(a, b);
+    if (givenSet.has(k) || kidSet.has(k)) return;
+    kidSet.add(k); kidOrder.push(k);
+    renderKid(); evaluate();
+  }
+  function removeSeg(k) {
+    if (!kidSet.has(k)) return;
+    kidSet.delete(k);
+    kidOrder = kidOrder.filter((x) => x !== k);
+    renderKid(); evaluate();
+  }
+
+  function startDraw(pt, e) {
+    painting = true; lastPt = pt;
+    svg.setPointerCapture(e.pointerId);
+  }
+
+  function bindDrawing() {
+    svg.addEventListener("pointerdown", (e) => {
+      const info = nearestDotInfo(e.clientX, e.clientY);
+      const t = e.target;
+      const onHit = t && t.classList && t.classList.contains("seg-hit") && t.dataset.key;
+      // 离格点很近 → 从该点起笔（可从已有线段端点继续画）
+      if (info && info.dist < CS * 0.3) { e.preventDefault(); startDraw(info.pt, e); return; }
+      // 否则点在某条已画线的中段 → 擦掉它
+      if (onHit) { e.preventDefault(); removeSeg(t.dataset.key); return; }
+      // 离格点稍远但仍在吸附范围 → 起笔
+      if (info && info.dist <= SNAP) { e.preventDefault(); startDraw(info.pt, e); }
+    });
+
+    svg.addEventListener("pointermove", (e) => {
+      if (!painting) return;
+      const info = nearestDotInfo(e.clientX, e.clientY);
+      if (!info || info.dist > SNAP) return;
+      const dot = info.pt;
+      if (dot[0] === lastPt[0] && dot[1] === lastPt[1]) return;
+      if (adjacent(lastPt, dot)) addSeg(lastPt, dot);
+      lastPt = dot; // 即便不相邻也更新，便于继续连线
+    });
+
+    const stop = () => { painting = false; };
+    svg.addEventListener("pointerup", stop);
+    svg.addEventListener("pointercancel", stop);
+    svg.addEventListener("lostpointercapture", stop);
+  }
+
+  // ---------- 判定 / 反馈 ----------
+  function evaluate() {
+    let correct = 0, wrong = 0;
+    for (const k of kidSet) (requiredSet.has(k) ? correct++ : wrong++);
+    const remaining = requiredSet.size - correct;
+    const solved = wrong === 0 && remaining === 0;
+
+    boardCard.classList.toggle("solved", solved);
+    statusEl.className = "status";
+    if (solved) {
+      statusEl.classList.add("ok");
+      statusEl.textContent = "🎉 完成！这就是漂亮的轴对称图形！";
+      celebrate();
+      newBtn.classList.add("celebrate");
+    } else {
+      newBtn.classList.remove("celebrate");
+      clearSparkle();
+      let msg = `还要画 ${remaining} 笔`;
+      if (wrong > 0) { msg += ` · 有 ${wrong} 笔画到不对称的位置了（红色）`; statusEl.classList.add("bad"); }
+      statusEl.textContent = msg;
+    }
+  }
+
+  function clearSparkle() {
+    const old = svg.querySelectorAll(".sparkle");
+    old.forEach((n) => n.remove());
+  }
+  function celebrate() {
+    clearSparkle();
+    const w = COLS * CS + 2 * PAD;
+    [[w * 0.5, 16], [w * 0.2, 40], [w * 0.8, 40]].forEach(([x, y], i) => {
+      const s = el("text", { x, y, "text-anchor": "middle", "font-size": 22, class: "sparkle" });
+      s.style.animationDelay = i * 0.08 + "s";
+      s.textContent = "✨";
+      svg.appendChild(s);
+    });
+  }
+
+  // ---------- 提示 ----------
+  function showHint() {
+    while (gGhost.firstChild) gGhost.removeChild(gGhost.firstChild);
+    for (const k of requiredSet) {
+      if (kidSet.has(k)) continue;
+      const [a, b] = parseSeg(k);
+      gGhost.appendChild(el("line", { x1: px(a[0]), y1: py(a[1]), x2: px(b[0]), y2: py(b[1]), class: "seg-ghost" }));
+    }
+    clearTimeout(ghostTimer);
+    ghostTimer = setTimeout(() => { while (gGhost.firstChild) gGhost.removeChild(gGhost.firstChild); }, 1800);
+  }
+
+  // ---------- 出新题 ----------
+  const STEPS = { easy: 4, medium: 6, hard: 9 };
+  function newPuzzle() {
+    const steps = STEPS[diffSel.value] || 6;
+    const puzzle = generate(axisSel.value, steps);
+    axis = puzzle.axis;
+    givenSet = new Set(puzzle.given);
+    requiredSet = puzzle.required;
+    kidSet = new Set(); kidOrder = [];
+    newBtn.classList.remove("celebrate");
+    buildBoard();
+    evaluate();
+  }
+
+  // ---------- 按钮 ----------
+  const newBtn = $("newBtn");
+  newBtn.addEventListener("click", newPuzzle);
+  $("undoBtn").addEventListener("click", () => {
+    const k = kidOrder.pop();
+    if (k) { kidSet.delete(k); renderKid(); evaluate(); }
+  });
+  $("clearBtn").addEventListener("click", () => {
+    kidSet.clear(); kidOrder = []; renderKid(); evaluate();
+  });
+  $("hintBtn").addEventListener("click", showHint);
+  axisSel.addEventListener("change", newPuzzle);
+  diffSel.addEventListener("change", newPuzzle);
+
+  newPuzzle();
+})();

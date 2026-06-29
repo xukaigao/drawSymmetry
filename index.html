@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🪞 画出对称的另一半</title>
+  <meta name="description" content="格子纸上给出对称轴和图形的一半，小朋友沿着格子把另一半画出来，认识轴对称。" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🪞 画出对称的另一半</h1>
+    <p class="tagline">虚线是<strong>对称轴（镜子）</strong>，蓝色是图形的<strong>一半</strong>。沿着格子，把<strong>另一半</strong>画出来吧！</p>
+  </header>
+
+  <section class="panel">
+    <div class="setting">
+      <label for="axisSel">对称轴</label>
+      <select id="axisSel">
+        <option value="random">随机</option>
+        <option value="v">竖直 ｜</option>
+        <option value="h">水平 —</option>
+        <option value="diag">斜线 ╱╲</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label for="diffSel">难度</label>
+      <select id="diffSel">
+        <option value="easy">简单</option>
+        <option value="medium" selected>中等</option>
+        <option value="hard">较难</option>
+      </select>
+    </div>
+    <button id="newBtn" class="btn primary">换一题</button>
+    <button id="undoBtn" class="btn">撤销</button>
+    <button id="clearBtn" class="btn">清空我画的</button>
+    <button id="hintBtn" class="btn">提示</button>
+  </section>
+
+  <main class="board-wrap">
+    <div id="boardCard" class="board-card">
+      <div id="board"></div>
+    </div>
+    <p id="status" class="status">沿着格子，把另一半画出来～</p>
+  </main>
+
+  <footer class="footer">
+    画法：在格子的<strong>点之间按住拖动</strong>，可以画横线、竖线和斜线。画错了点一下那条线就能擦掉，或用「撤销 / 清空」。
+  </footer>
+
+  <script src="js/game.js"></script>
+</body>
+</html>
