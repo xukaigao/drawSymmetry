@@ -285,13 +285,27 @@
     gPreview = el("g", {}); svg.appendChild(gPreview); // 拖动预览
 
     // 对称轴文字提示
-    const labelText = axis.type === "v" ? "← 镜子 →"
-      : axis.type === "h" ? "↑ 镜子 ↓" : "镜子";
-    const lblPos = axis.type === "h"
-      ? [px(COLS) - 6, py(AY) - 8, "end"]
-      : [px(axis.type === "v" ? AX : la[0]) + 6, py(0) + 14, "start"];
-    const lbl = el("text", { x: lblPos[0], y: lblPos[1], class: "axis-label", "text-anchor": lblPos[2] });
-    lbl.textContent = labelText;
+    let lbl;
+    if (axis.type === "v") {
+      lbl = el("text", { x: px(AX), y: py(0) + 14, class: "axis-label", "text-anchor": "middle" });
+      lbl.textContent = "← 镜子 →";
+    } else if (axis.type === "h") {
+      lbl = el("text", { x: px(COLS) - 6, y: py(AY) - 8, class: "axis-label", "text-anchor": "end" });
+      lbl.textContent = "↑ 镜子 ↓";
+    } else {
+      // 斜轴：把「镜子」放在轴线中点旁，并沿轴线方向倾斜
+      const mx = (px(la[0]) + px(lb[0])) / 2;
+      const my = (py(la[1]) + py(lb[1])) / 2;
+      const angle = axis.type === "d1" ? 45 : -45;  // d1 沿 ↘、d2 沿 ↗
+      const ox = axis.type === "d1" ? 9 : 9;
+      const oy = axis.type === "d1" ? -9 : 9;        // 偏到轴线一侧，避免压住虚线
+      const ax2 = mx + ox, ay2 = my + oy;
+      lbl = el("text", {
+        x: ax2, y: ay2, class: "axis-label", "text-anchor": "middle",
+        transform: `rotate(${angle}, ${ax2}, ${ay2})`,
+      });
+      lbl.textContent = "镜子 🪞";
+    }
     svg.appendChild(lbl);
 
     board.appendChild(svg);
