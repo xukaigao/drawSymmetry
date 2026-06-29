@@ -15,6 +15,22 @@
   const SNAP = CS * 0.42;      // 画线时吸附到格点的距离阈值
 
   const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  // 2 格矩形对角线（斜率 1/2、2 等）
+  const SLANT2 = [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]];
+  // 3 格矩形对角线（斜率 1/3、2/3、3、3/2 等）
+  const SLANT3 = [
+    [3, 1], [3, -1], [-3, 1], [-3, -1], [1, 3], [1, -3], [-1, 3], [-1, -3],
+    [3, 2], [3, -2], [-3, 2], [-3, -2], [2, 3], [2, -3], [-2, 3], [-2, -3],
+  ];
+  // 出题时按难度可用的「一步」向量（都是基本向量，gcd=1，无中间格点）
+  const STEP_SETS = {
+    easy: DIRS8,
+    medium: DIRS8.concat(SLANT2),
+    hard: DIRS8.concat(SLANT2, SLANT3),
+  };
+  const MAX_EXTENT = 3; // 画线时矩形最多跨 3 格
+
+  const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) { [a, b] = [b, a % b]; } return a; };
 
   const SVGNS = "http://www.w3.org/2000/svg";
   const $ = (id) => document.getElementById(id);
@@ -24,7 +40,7 @@
   const axisSel = $("axisSel");
   const diffSel = $("diffSel");
 
-  let svg, gGhost, gKid;        // 关键 svg 图层
+  let svg, gGhost, gKid, gPreview; // 关键 svg 图层
   let axis = null;              // 当前对称轴
   let givenSet = new Set();     // 题目给出的一半
   let requiredSet = new Set();  // 标准答案（镜像）
@@ -92,7 +108,7 @@
   }
 
   // ---------- 出题 ----------
-  function generate(axisChoice, steps) {
+  function generate(axisChoice, steps, stepSet) {
     let type;
     if (axisChoice === "v" || axisChoice === "h") type = axisChoice;
     else if (axisChoice === "diag") type = Math.random() < 0.5 ? "d1" : "d2";
@@ -106,7 +122,7 @@
       while (segs.size < steps && guard < steps * 8) {
         guard++;
         let moved = false;
-        for (const [dx, dy] of shuffle(DIRS8.slice())) {
+        for (const [dx, dy] of shuffle(stepSet.slice())) {
           const q = [p[0] + dx, p[1] + dy];
           if (!inBounds(q) || ax.dist(q) > 0) continue;
           if (Math.min(ax.dist(p), ax.dist(q)) >= 0) continue;       // 不要落在轴上的线段
@@ -181,6 +197,7 @@
 
     gGhost = el("g", {}); svg.appendChild(gGhost);   // 提示层
     gKid = el("g", {}); svg.appendChild(gKid);       // 孩子画的
+    gPreview = el("g", {}); svg.appendChild(gPreview); // 拖动预览
 
     // 对称轴文字提示
     const labelText = axis.type === "v" ? "← 镜子 →"
@@ -219,22 +236,24 @@
   // 返回离指针最近的格点及其距离（格点已限制在网格内）
   function nearestDotInfo(clientX, clientY) {
     const loc = svgPoint(clientX, clientY);
-    let gx = Math.round((loc.x - PAD) / CS);
-    let gy = Math.round((loc.y - PAD) / CS);
+    const gx = Math.round((loc.x - PAD) / CS);
+    const gy = Math.round((loc.y - PAD) / CS);
     if (gx < 0 || gx > COLS || gy < 0 || gy > ROWS) return null;
     const dist = Math.hypot(loc.x - px(gx), loc.y - py(gy));
     return { pt: [gx, gy], dist };
   }
-  const adjacent = (a, b) => {
-    const dx = Math.abs(a[0] - b[0]), dy = Math.abs(a[1] - b[1]);
-    return Math.max(dx, dy) === 1;
-  };
+  // 把指针位置取整到最近的格点（始终返回，已夹在网格内）——用于拖动终点
+  function roundDot(clientX, clientY) {
+    const loc = svgPoint(clientX, clientY);
+    const gx = Math.min(COLS, Math.max(0, Math.round((loc.x - PAD) / CS)));
+    const gy = Math.min(ROWS, Math.max(0, Math.round((loc.y - PAD) / CS)));
+    return [gx, gy];
+  }
 
   function addSeg(a, b) {
     const k = segKey(a, b);
     if (givenSet.has(k) || kidSet.has(k)) return;
     kidSet.add(k); kidOrder.push(k);
-    renderKid(); evaluate();
   }
   function removeSeg(k) {
     if (!kidSet.has(k)) return;
@@ -243,9 +262,29 @@
     renderKid(); evaluate();
   }
 
-  function startDraw(pt, e) {
-    painting = true; lastPt = pt;
-    svg.setPointerCapture(e.pointerId);
+  // 把任意「A→B 直线」拆成若干基本格段后加入（支持 2~3 格矩形对角线）
+  function commitSegment(a, b) {
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    if (dx === 0 && dy === 0) return;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) > MAX_EXTENT) return; // 超过 3 格忽略
+    const g = gcd(dx, dy);
+    const sx = dx / g, sy = dy / g;
+    for (let i = 0; i < g; i++) {
+      addSeg([a[0] + sx * i, a[1] + sy * i], [a[0] + sx * (i + 1), a[1] + sy * (i + 1)]);
+    }
+    renderKid(); evaluate();
+  }
+
+  function clearPreview() { while (gPreview.firstChild) gPreview.removeChild(gPreview.firstChild); }
+  function drawPreview(a, b) {
+    clearPreview();
+    if (a[0] === b[0] && a[1] === b[1]) return;
+    const tooLong = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1])) > MAX_EXTENT;
+    gPreview.appendChild(el("line", {
+      x1: px(a[0]), y1: py(a[1]), x2: px(b[0]), y2: py(b[1]),
+      stroke: tooLong ? "#c0392b" : "#7aa0d0", "stroke-width": 4,
+      "stroke-linecap": "round", "stroke-dasharray": "3 6", "pointer-events": "none",
+    }));
   }
 
   function bindDrawing() {
@@ -253,28 +292,29 @@
       const info = nearestDotInfo(e.clientX, e.clientY);
       const t = e.target;
       const onHit = t && t.classList && t.classList.contains("seg-hit") && t.dataset.key;
-      // 离格点很近 → 从该点起笔（可从已有线段端点继续画）
-      if (info && info.dist < CS * 0.3) { e.preventDefault(); startDraw(info.pt, e); return; }
-      // 否则点在某条已画线的中段 → 擦掉它
-      if (onHit) { e.preventDefault(); removeSeg(t.dataset.key); return; }
-      // 离格点稍远但仍在吸附范围 → 起笔
-      if (info && info.dist <= SNAP) { e.preventDefault(); startDraw(info.pt, e); }
+      if (info && info.dist <= SNAP) {        // 在格点附近起笔
+        e.preventDefault();
+        painting = true; lastPt = info.pt;
+        svg.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (onHit) { e.preventDefault(); removeSeg(t.dataset.key); } // 点已画线中段 → 擦掉
     });
 
     svg.addEventListener("pointermove", (e) => {
       if (!painting) return;
-      const info = nearestDotInfo(e.clientX, e.clientY);
-      if (!info || info.dist > SNAP) return;
-      const dot = info.pt;
-      if (dot[0] === lastPt[0] && dot[1] === lastPt[1]) return;
-      if (adjacent(lastPt, dot)) addSeg(lastPt, dot);
-      lastPt = dot; // 即便不相邻也更新，便于继续连线
+      drawPreview(lastPt, roundDot(e.clientX, e.clientY));
     });
 
-    const stop = () => { painting = false; };
-    svg.addEventListener("pointerup", stop);
-    svg.addEventListener("pointercancel", stop);
-    svg.addEventListener("lostpointercapture", stop);
+    const finish = (e) => {
+      if (!painting) return;
+      painting = false;
+      clearPreview();
+      if (e && typeof e.clientX === "number") commitSegment(lastPt, roundDot(e.clientX, e.clientY));
+    };
+    svg.addEventListener("pointerup", finish);
+    svg.addEventListener("pointercancel", () => { painting = false; clearPreview(); });
+    svg.addEventListener("lostpointercapture", () => { painting = false; clearPreview(); });
   }
 
   // ---------- 判定 / 反馈 ----------
@@ -328,10 +368,12 @@
   }
 
   // ---------- 出新题 ----------
-  const STEPS = { easy: 4, medium: 6, hard: 9 };
+  const STEPS = { easy: 4, medium: 5, hard: 7 };
   function newPuzzle() {
-    const steps = STEPS[diffSel.value] || 6;
-    const puzzle = generate(axisSel.value, steps);
+    const diff = diffSel.value;
+    const steps = STEPS[diff] || 5;
+    const stepSet = STEP_SETS[diff] || DIRS8;
+    const puzzle = generate(axisSel.value, steps, stepSet);
     axis = puzzle.axis;
     givenSet = new Set(puzzle.given);
     requiredSet = puzzle.required;
