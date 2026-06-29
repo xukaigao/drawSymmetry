@@ -34,6 +34,21 @@ body {
 }
 .tagline strong { color: var(--given); }
 
+/* 成就栏 */
+.stats {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: center; margin: 8px auto 0; padding: 0 16px;
+}
+.chip {
+  background: #fff; border: 2px solid #ffd93b; border-radius: 999px;
+  padding: 5px 14px; font-size: 0.92rem; font-weight: 700; color: #4a6b94;
+  box-shadow: 0 3px 10px rgba(40, 70, 120, 0.1);
+}
+.chip b { color: var(--ok); font-size: 1.05rem; }
+.chip.bump { animation: chipBump 0.5s ease; }
+@keyframes chipBump { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.progress-line { display: block; margin-top: 8px; color: var(--ok); font-size: 0.95rem; }
+
 .panel {
   display: flex;
   flex-wrap: wrap;

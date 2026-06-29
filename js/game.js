@@ -52,6 +52,8 @@
   let ghostTimer = 0;
   let lastSolved = false;       // 防止重复弹通关祝贺
   let praiseTimer = 0;          // 通关后延时弹窗
+  let currentFigure = null;     // 中等档：当前题目图形名（如「王冠」）
+  let countedThisPuzzle = false; // 本题是否已计入成就（防止撤销再画重复计数）
 
   // 通关彩虹屁：随机一句，肯定 6–12 岁孩子的努力与思考
   const PRAISES = [
@@ -77,6 +79,53 @@
     "你做得又快又好，继续加油，你真是个小能手！",
   ];
   const randomPraise = () => PRAISES[Math.floor(Math.random() * PRAISES.length)];
+
+  // ---------- 成就 / 进度（持久化，给孩子持续动力） ----------
+  const LS_COUNT = "drawSym_solvedCount";
+  const LS_COLLECTED = "drawSym_collected";
+  let solvedCount = 0;          // 累计完成的题数（所有难度）
+  let collected = new Set();    // 收集到的题库图形名（图鉴）
+  let pendingProgressMsg = "";  // 通关弹窗里附带的进度文字
+  let statsEl = null;
+
+  function loadProgress() {
+    try {
+      solvedCount = parseInt(localStorage.getItem(LS_COUNT) || "0", 10) || 0;
+      const arr = JSON.parse(localStorage.getItem(LS_COLLECTED) || "[]");
+      if (Array.isArray(arr)) collected = new Set(arr);
+    } catch (_) { /* localStorage 不可用就用内存值 */ }
+  }
+  function saveProgress() {
+    try {
+      localStorage.setItem(LS_COUNT, String(solvedCount));
+      localStorage.setItem(LS_COLLECTED, JSON.stringify([...collected]));
+    } catch (_) { }
+  }
+  function renderStats(bump) {
+    if (!statsEl) return;
+    const total = LIBRARY.length;
+    statsEl.innerHTML =
+      `<span class="chip${bump ? " bump" : ""}">🏅 已画好 <b>${solvedCount}</b> 个图形</span>` +
+      `<span class="chip${bump ? " bump" : ""}">📒 图鉴 <b>${collected.size}</b>/${total}</span>`;
+  }
+  function onSolved() {
+    solvedCount++;
+    let newly = false;
+    if (currentFigure && !collected.has(currentFigure)) { collected.add(currentFigure); newly = true; }
+    saveProgress();
+    renderStats(true);
+
+    // 组织通关弹窗里的进度鼓励语
+    const lines = [`这是你完成的第 ${solvedCount} 个图形！`];
+    if (newly && collected.size >= LIBRARY.length) {
+      lines.push(`🏆 太了不起！${LIBRARY.length} 种图形全部收集齐啦！`);
+    } else if (newly) {
+      lines.push(`🎉 解锁新图形【${currentFigure}】！图鉴 ${collected.size}/${LIBRARY.length}`);
+    } else if (solvedCount % 5 === 0) {
+      lines.push(`🔥 连续完成 ${solvedCount} 个，你太有毅力啦！`);
+    }
+    pendingProgressMsg = lines.join("<br>");
+  }
 
   const el = (name, attrs) => {
     const n = document.createElementNS(SVGNS, name);
@@ -210,7 +259,101 @@
     return segs.size >= Math.max(3, steps - 2) ? segs : null;
   }
 
+  // 中等档：固定题库——漂亮、有意义的图形（竖直对称）。
+  // 每个图形用「左半边」的折线表示（端点 x≤AX=5，触轴只在顶点处），
+  // 镜像后即得右半边标准答案。多段折线可拼出门、横杆等细节。
+  const LIBRARY = [
+    { name: "王冠", parts: [[[5, 7], [2, 7], [2, 4], [3, 2], [4, 4], [5, 2]]] },
+    { name: "爱心", parts: [[[5, 7], [3, 5], [2, 4], [2, 3], [3, 2], [4, 2], [5, 3]]] },
+    { name: "房子", parts: [[[5, 7], [2, 7], [2, 4], [5, 2]], [[4, 7], [4, 5], [5, 5]]] },
+    { name: "圣诞树", parts: [[[5, 1], [2, 4], [3, 4], [1, 6], [4, 6], [4, 7], [5, 7]]] },
+    { name: "钻石", parts: [[[5, 2], [3, 2], [2, 4], [5, 7]], [[2, 4], [5, 4]]] },
+    { name: "箭头", parts: [[[5, 1], [2, 4], [4, 4], [4, 7], [5, 7]]] },
+    { name: "杯子", parts: [[[5, 7], [2, 7], [1, 5], [1, 3], [5, 3]], [[1, 3], [0, 4]]] },
+    { name: "蝴蝶结", parts: [[[5, 5], [2, 3], [2, 7], [5, 5]]] },
+    { name: "小鱼", parts: [[[5, 1], [2, 3], [2, 5], [4, 7], [5, 5]]] },
+    { name: "星星", parts: [[[5, 1], [4, 3], [2, 4], [4, 5], [5, 7]]] },
+    {
+      name: "城堡",
+      parts: [
+        [[5, 7], [1, 7], [1, 3], [2, 3], [2, 2], [3, 2], [3, 3], [4, 3], [4, 2], [5, 2]],
+        [[4, 7], [4, 5], [5, 5]],
+      ],
+    },
+    {
+      name: "雪人",
+      parts: [
+        [[5, 1], [3, 2], [4, 3], [5, 3]],
+        [[5, 3], [2, 4], [2, 6], [4, 7], [5, 7]],
+        [[2, 5], [0, 4]],
+      ],
+    },
+    { name: "蘑菇", parts: [[[5, 1], [2, 3], [3, 4], [4, 4], [4, 7], [5, 7]]] },
+    { name: "雨伞", parts: [[[5, 1], [3, 2], [1, 4], [2, 5], [3, 4], [4, 5], [5, 4]]] },
+    {
+      name: "热气球",
+      parts: [
+        [[5, 0], [3, 1], [1, 3], [3, 5], [5, 5]],
+        [[5, 6], [4, 6], [4, 7], [5, 7]],
+        [[3, 5], [4, 6]],
+      ],
+    },
+    {
+      name: "皇冠宝石",
+      parts: [
+        [[5, 7], [2, 7], [2, 4], [3, 2], [4, 4], [5, 2]],
+        [[5, 5], [3, 6], [5, 7]],
+      ],
+    },
+    { name: "花朵", parts: [[[5, 6], [2, 5], [2, 2], [3, 4], [5, 1]], [[5, 6], [3, 7]]] },
+    { name: "帆船", parts: [[[5, 7], [3, 7], [1, 6], [5, 6]], [[5, 2], [3, 6], [5, 6]]] },
+  ];
+
+  // 把折线按 gcd 拆成「基本格段」（与孩子画线时的拆分一致，保证可对上）
+  function polyToSegs(points) {
+    const out = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const a = points[i], b = points[i + 1];
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      if (dx === 0 && dy === 0) continue;
+      const g = gcd(dx, dy);
+      const sx = dx / g, sy = dy / g;
+      for (let j = 0; j < g; j++) {
+        out.push(segKey([a[0] + sx * j, a[1] + sy * j], [a[0] + sx * (j + 1), a[1] + sy * (j + 1)]));
+      }
+    }
+    return out;
+  }
+
+  // 洗牌不重复：把题库索引洗成一个袋子，逐个取，取完再洗（避免与上一个相邻重复）
+  let figBag = [];
+  let lastFigIdx = -1;
+  function nextLibIndex() {
+    if (!figBag.length) {
+      figBag = LIBRARY.map((_, i) => i);
+      shuffle(figBag);
+      if (figBag.length > 1 && figBag[figBag.length - 1] === lastFigIdx) {
+        [figBag[0], figBag[figBag.length - 1]] = [figBag[figBag.length - 1], figBag[0]];
+      }
+    }
+    lastFigIdx = figBag.pop();
+    return lastFigIdx;
+  }
+
+  function generateFromLibrary() {
+    const ax = makeAxis("v"); // 这些图形都是竖直对称才好看，固定用竖轴
+    const fig = LIBRARY[nextLibIndex()];
+    const segs = new Set();
+    for (const part of fig.parts) for (const k of polyToSegs(part)) segs.add(k);
+    const required = new Set([...segs].map((k) => {
+      const [a, b] = parseSeg(k);
+      return segKey(ax.reflect(a), ax.reflect(b));
+    }));
+    return { axis: ax, given: [...segs], required, name: fig.name };
+  }
+
   function generate(axisChoice, diff) {
+    if (diff === "medium") return generateFromLibrary();
     const steps = STEPS[diff] || 5;
     const stepSet = STEP_SETS[diff] || DIRS8;
     let type;
@@ -427,10 +570,11 @@
     statusEl.className = "status";
     if (solved) {
       statusEl.classList.add("ok");
-      statusEl.textContent = "🎉 完成！这就是漂亮的轴对称图形！";
+      statusEl.textContent = currentFigure ? `🎉 完成！这是一个漂亮的【${currentFigure}】！` : "🎉 完成！这就是漂亮的轴对称图形！";
       celebrate();
       newBtn.classList.add("celebrate");
-      if (!lastSolved) { // 刚通关：先让孩子看 2 秒图形，再弹祝贺
+      if (!lastSolved) { // 刚通关：记一次成就，先让孩子看 2 秒图形，再弹祝贺
+        if (!countedThisPuzzle) { countedThisPuzzle = true; onSolved(); }
         clearTimeout(praiseTimer);
         praiseTimer = setTimeout(showPraise, 2000);
       }
@@ -438,7 +582,7 @@
       clearTimeout(praiseTimer); // 还没通关/又改动了，取消待弹的祝贺
       newBtn.classList.remove("celebrate");
       clearSparkle();
-      let msg = `还要画 ${remaining} 笔`;
+      let msg = currentFigure ? `画出【${currentFigure}】的另一半 · 还要画 ${remaining} 笔` : `还要画 ${remaining} 笔`;
       if (wrong > 0) { msg += ` · 有 ${wrong} 笔画到不对称的位置了（红色）`; statusEl.classList.add("bad"); }
       statusEl.textContent = msg;
     }
@@ -446,7 +590,8 @@
   }
 
   function showPraise() {
-    praiseText.textContent = randomPraise();
+    praiseText.innerHTML = randomPraise() +
+      (pendingProgressMsg ? `<span class="progress-line">${pendingProgressMsg}</span>` : "");
     praiseModal.classList.remove("hidden");
   }
   function hidePraise() { praiseModal.classList.add("hidden"); }
@@ -481,12 +626,15 @@
   // ---------- 出新题 ----------
   const STEPS = { easy: 4, medium: 5, hard: 7 };
   function newPuzzle() {
+    axisSel.disabled = (diffSel.value === "medium"); // 中等档为固定题库，恒用竖轴
     const puzzle = generate(axisSel.value, diffSel.value);
     axis = puzzle.axis;
+    currentFigure = puzzle.name || null;
     givenSet = new Set(puzzle.given);
     requiredSet = puzzle.required;
     kidSet = new Set(); kidOrder = [];
     lastSolved = false;
+    countedThisPuzzle = false;
     clearTimeout(praiseTimer);
     newBtn.classList.remove("celebrate");
     hidePraise();
@@ -510,5 +658,8 @@
   axisSel.addEventListener("change", newPuzzle);
   diffSel.addEventListener("change", newPuzzle);
 
+  statsEl = $("stats");
+  loadProgress();
+  renderStats(false);
   newPuzzle();
 })();
