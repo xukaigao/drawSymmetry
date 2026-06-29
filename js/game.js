@@ -39,6 +39,8 @@
   const statusEl = $("status");
   const axisSel = $("axisSel");
   const diffSel = $("diffSel");
+  const praiseModal = $("praiseModal");
+  const praiseText = $("praiseText");
 
   let svg, gGhost, gKid, gPreview; // 关键 svg 图层
   let axis = null;              // 当前对称轴
@@ -48,6 +50,33 @@
   let kidOrder = [];            // 画线顺序（用于撤销）
   let painting = false, lastPt = null;
   let ghostTimer = 0;
+  let lastSolved = false;       // 防止重复弹通关祝贺
+  let praiseTimer = 0;          // 通关后延时弹窗
+
+  // 通关彩虹屁：随机一句，肯定 6–12 岁孩子的努力与思考
+  const PRAISES = [
+    "太厉害了！你把另一半画得分毫不差，对称感真好！",
+    "你观察得好仔细，每一笔都找准了镜子里的位置！",
+    "哇，你的眼睛像尺子一样准，画得又对又漂亮！",
+    "你动了好多脑筋，这份认真特别了不起！",
+    "你一步步想清楚再下笔，真是个会思考的孩子！",
+    "完美对称！你的空间想象力越来越棒啦！",
+    "你没有急着乱画，而是仔细对照，这样真聪明！",
+    "你把斜线也画得这么准，手和脑配合得真好！",
+    "了不起！再难的对称图形都被你拿下了！",
+    "你的耐心和细心，让这幅图变得对称又好看！",
+    "你越画越熟练，脑筋转得又快又准！",
+    "真棒！你能看出镜子两边一一对应，思路很清晰！",
+    "你敢于挑战难题，这股认真劲儿太可贵了！",
+    "哇，画得真整齐！你对对称的理解越来越深啦！",
+    "你把每条线都安排得恰到好处，真有数学头脑！",
+    "你的努力都画在纸上啦，每一笔都值得表扬！",
+    "你像小镜子一样，把图形对得严丝合缝！",
+    "太赞了！你先思考再动手，越来越会学习了！",
+    "你找到了所有对称的线，观察力满分！",
+    "你做得又快又好，继续加油，你真是个小能手！",
+  ];
+  const randomPraise = () => PRAISES[Math.floor(Math.random() * PRAISES.length)];
 
   const el = (name, attrs) => {
     const n = document.createElementNS(SVGNS, name);
@@ -108,7 +137,82 @@
   }
 
   // ---------- 出题 ----------
-  function generate(axisChoice, steps, stepSet) {
+  // 简单档：从对称轴出发、不自交地走一圈再收回到轴上，形成「闭合轮廓」的一半，
+  // 只有外轮廓、没有内部零碎线段，孩子描另一半更省事。
+  function outlineWalk(ax, minLen, maxLen) {
+    const axisPts = [];
+    for (let x = 0; x <= COLS; x++)
+      for (let y = 0; y <= ROWS; y++)
+        if (ax.dist([x, y]) === 0) axisPts.push([x, y]);
+    if (!axisPts.length) return null;
+
+    for (let tryi = 0; tryi < 50; tryi++) {
+      const start = axisPts[randInt(0, axisPts.length - 1)];
+      const visited = new Set([pStr(start)]);
+      const pts = [start];
+      let p = start;
+      const target = randInt(minLen, maxLen);
+      let closed = false;
+      while (pts.length - 1 < target) {
+        const cands = [];
+        for (const [dx, dy] of DIRS8) {
+          const q = [p[0] + dx, p[1] + dy];
+          if (!inBounds(q) || ax.dist(q) > 0) continue;
+          if (visited.has(pStr(q))) continue;                    // 不重复经过格点（不自交）
+          if (Math.min(ax.dist(p), ax.dist(q)) >= 0) continue;   // 不沿着轴走
+          if (!inBounds(ax.reflect(q))) continue;
+          cands.push(q);
+        }
+        if (!cands.length) break;
+        const interior = cands.filter((q) => ax.dist(q) < 0);
+        const onAxis = cands.filter((q) => ax.dist(q) === 0);
+        if (pts.length - 1 >= minLen && onAxis.length && Math.random() < 0.6) {
+          const q = onAxis[randInt(0, onAxis.length - 1)];
+          pts.push(q); closed = true; break;                     // 收口回到对称轴
+        }
+        const pool = interior.length ? interior : cands;
+        const q = pool[randInt(0, pool.length - 1)];
+        pts.push(q); visited.add(pStr(q)); p = q;
+      }
+      if (pts.length >= 4) { // 至少 3 段
+        const segs = new Set();
+        for (let i = 0; i + 1 < pts.length; i++) segs.add(segKey(pts[i], pts[i + 1]));
+        return segs;
+      }
+    }
+    return null;
+  }
+
+  // 中等/较难档：自由折线（可含 2~3 格斜线、可分叉），更有挑战。
+  function freeWalk(ax, steps, stepSet) {
+    const segs = new Set();
+    let p = pickStart(ax);
+    let guard = 0;
+    while (segs.size < steps && guard < steps * 8) {
+      guard++;
+      let moved = false;
+      for (const [dx, dy] of shuffle(stepSet.slice())) {
+        const q = [p[0] + dx, p[1] + dy];
+        if (!inBounds(q) || ax.dist(q) > 0) continue;
+        if (Math.min(ax.dist(p), ax.dist(q)) >= 0) continue;       // 不要落在轴上的线段
+        const rp = ax.reflect(p), rq = ax.reflect(q);
+        if (!inBounds(rp) || !inBounds(rq)) continue;
+        const k = segKey(p, q);
+        if (segs.has(k)) continue;
+        segs.add(k); p = q; moved = true; break;
+      }
+      if (!moved) { // 卡住，跳到已有的某个端点继续
+        const pts = [...segs].flatMap(parseSeg);
+        if (!pts.length) break;
+        p = pts[randInt(0, pts.length - 1)];
+      }
+    }
+    return segs.size >= Math.max(3, steps - 2) ? segs : null;
+  }
+
+  function generate(axisChoice, diff) {
+    const steps = STEPS[diff] || 5;
+    const stepSet = STEP_SETS[diff] || DIRS8;
     let type;
     if (axisChoice === "v" || axisChoice === "h") type = axisChoice;
     else if (axisChoice === "diag") type = Math.random() < 0.5 ? "d1" : "d2";
@@ -116,29 +220,8 @@
 
     for (let attempt = 0; attempt < 80; attempt++) {
       const ax = makeAxis(type);
-      const segs = new Set();
-      let p = pickStart(ax);
-      let guard = 0;
-      while (segs.size < steps && guard < steps * 8) {
-        guard++;
-        let moved = false;
-        for (const [dx, dy] of shuffle(stepSet.slice())) {
-          const q = [p[0] + dx, p[1] + dy];
-          if (!inBounds(q) || ax.dist(q) > 0) continue;
-          if (Math.min(ax.dist(p), ax.dist(q)) >= 0) continue;       // 不要落在轴上的线段
-          const rp = ax.reflect(p), rq = ax.reflect(q);
-          if (!inBounds(rp) || !inBounds(rq)) continue;
-          const k = segKey(p, q);
-          if (segs.has(k)) continue;
-          segs.add(k); p = q; moved = true; break;
-        }
-        if (!moved) { // 卡住，跳到已有的某个端点继续
-          const pts = [...segs].flatMap(parseSeg);
-          if (!pts.length) break;
-          p = pts[randInt(0, pts.length - 1)];
-        }
-      }
-      if (segs.size >= Math.max(3, steps - 2)) {
+      const segs = diff === "easy" ? outlineWalk(ax, 4, 7) : freeWalk(ax, steps, stepSet);
+      if (segs && segs.size >= 3) {
         const required = new Set([...segs].map((k) => {
           const [a, b] = parseSeg(k);
           return segKey(ax.reflect(a), ax.reflect(b));
@@ -146,9 +229,11 @@
         return { axis: ax, given: [...segs], required };
       }
     }
-    // 兜底：竖轴上的一个小三角
+    // 兜底：竖轴上的一个小轮廓（都用基本格段，保证可画可对）
     const ax = makeAxis("v");
-    const g = [segKey([5, 2], [3, 2]), segKey([3, 2], [3, 5]), segKey([3, 5], [5, 5])];
+    const fb = [[5, 1], [4, 2], [4, 3], [5, 4]];
+    const g = [];
+    for (let i = 0; i + 1 < fb.length; i++) g.push(segKey(fb[i], fb[i + 1]));
     const required = new Set(g.map((k) => { const [a, b] = parseSeg(k); return segKey(ax.reflect(a), ax.reflect(b)); }));
     return { axis: ax, given: g, required };
   }
@@ -331,14 +416,26 @@
       statusEl.textContent = "🎉 完成！这就是漂亮的轴对称图形！";
       celebrate();
       newBtn.classList.add("celebrate");
+      if (!lastSolved) { // 刚通关：先让孩子看 2 秒图形，再弹祝贺
+        clearTimeout(praiseTimer);
+        praiseTimer = setTimeout(showPraise, 2000);
+      }
     } else {
+      clearTimeout(praiseTimer); // 还没通关/又改动了，取消待弹的祝贺
       newBtn.classList.remove("celebrate");
       clearSparkle();
       let msg = `还要画 ${remaining} 笔`;
       if (wrong > 0) { msg += ` · 有 ${wrong} 笔画到不对称的位置了（红色）`; statusEl.classList.add("bad"); }
       statusEl.textContent = msg;
     }
+    lastSolved = solved;
   }
+
+  function showPraise() {
+    praiseText.textContent = randomPraise();
+    praiseModal.classList.remove("hidden");
+  }
+  function hidePraise() { praiseModal.classList.add("hidden"); }
 
   function clearSparkle() {
     const old = svg.querySelectorAll(".sparkle");
@@ -370,15 +467,15 @@
   // ---------- 出新题 ----------
   const STEPS = { easy: 4, medium: 5, hard: 7 };
   function newPuzzle() {
-    const diff = diffSel.value;
-    const steps = STEPS[diff] || 5;
-    const stepSet = STEP_SETS[diff] || DIRS8;
-    const puzzle = generate(axisSel.value, steps, stepSet);
+    const puzzle = generate(axisSel.value, diffSel.value);
     axis = puzzle.axis;
     givenSet = new Set(puzzle.given);
     requiredSet = puzzle.required;
     kidSet = new Set(); kidOrder = [];
+    lastSolved = false;
+    clearTimeout(praiseTimer);
     newBtn.classList.remove("celebrate");
+    hidePraise();
     buildBoard();
     evaluate();
   }
@@ -394,6 +491,8 @@
     kidSet.clear(); kidOrder = []; renderKid(); evaluate();
   });
   $("hintBtn").addEventListener("click", showHint);
+  $("praiseClose").addEventListener("click", hidePraise); // 关掉后停留在原题，方便细看
+  praiseModal.addEventListener("click", (e) => { if (e.target === praiseModal) hidePraise(); });
   axisSel.addEventListener("change", newPuzzle);
   diffSel.addEventListener("change", newPuzzle);
 
