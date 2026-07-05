@@ -572,7 +572,7 @@
       statusEl.classList.add("ok");
       statusEl.textContent = currentFigure ? `🎉 完成！这是一个漂亮的【${currentFigure}】！` : "🎉 完成！这就是漂亮的轴对称图形！";
       celebrate();
-      newBtn.classList.add("celebrate");
+      newBtn?.classList.add("celebrate");
       if (!lastSolved) { // 刚通关：记一次成就，先让孩子看 2 秒图形，再弹祝贺
         if (!countedThisPuzzle) { countedThisPuzzle = true; onSolved(); }
         clearTimeout(praiseTimer);
@@ -580,7 +580,7 @@
       }
     } else {
       clearTimeout(praiseTimer); // 还没通关/又改动了，取消待弹的祝贺
-      newBtn.classList.remove("celebrate");
+      newBtn?.classList.remove("celebrate");
       clearSparkle();
       let msg = currentFigure ? `画出【${currentFigure}】的另一半 · 还要画 ${remaining} 笔` : `还要画 ${remaining} 笔`;
       if (wrong > 0) { msg += ` · 有 ${wrong} 笔画到不对称的位置了（红色）`; statusEl.classList.add("bad"); }
@@ -636,23 +636,24 @@
     lastSolved = false;
     countedThisPuzzle = false;
     clearTimeout(praiseTimer);
-    newBtn.classList.remove("celebrate");
+    newBtn?.classList.remove("celebrate");
     hidePraise();
     buildBoard();
     evaluate();
   }
 
   // ---------- 按钮 ----------
+  // 用可选链 ?. 绑定，任一按钮暂时缺失也不会中断初始化、影响首屏出题
   const newBtn = $("newBtn");
-  newBtn.addEventListener("click", newPuzzle);
-  $("clearBtn").addEventListener("click", () => {
+  newBtn?.addEventListener("click", newPuzzle);
+  $("clearBtn")?.addEventListener("click", () => {
     kidSet.clear(); kidOrder = []; renderKid(); evaluate();
   });
-  $("hintBtn").addEventListener("click", showHint);
-  $("praiseClose").addEventListener("click", hidePraise); // 关掉后停留在原题，方便细看
-  praiseModal.addEventListener("click", (e) => { if (e.target === praiseModal) hidePraise(); });
-  axisSel.addEventListener("change", newPuzzle);
-  diffSel.addEventListener("change", newPuzzle);
+  $("hintBtn")?.addEventListener("click", showHint);
+  $("praiseClose")?.addEventListener("click", hidePraise); // 关掉后停留在原题，方便细看
+  praiseModal?.addEventListener("click", (e) => { if (e.target === praiseModal) hidePraise(); });
+  axisSel?.addEventListener("change", newPuzzle);
+  diffSel?.addEventListener("change", newPuzzle);
 
   statsEl = $("stats");
   loadProgress();
