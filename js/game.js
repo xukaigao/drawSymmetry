@@ -47,7 +47,7 @@
   let givenSet = new Set();     // 题目给出的一半
   let requiredSet = new Set();  // 标准答案（镜像）
   let kidSet = new Set();       // 孩子已画
-  let kidOrder = [];            // 画线顺序（用于撤销）
+  let kidOrder = [];            // 画线顺序（用于按序渲染）
   let painting = false, lastPt = null;
   let ghostTimer = 0;
   let lastSolved = false;       // 防止重复弹通关祝贺
@@ -645,10 +645,6 @@
   // ---------- 按钮 ----------
   const newBtn = $("newBtn");
   newBtn.addEventListener("click", newPuzzle);
-  $("undoBtn").addEventListener("click", () => {
-    const k = kidOrder.pop();
-    if (k) { kidSet.delete(k); renderKid(); evaluate(); }
-  });
   $("clearBtn").addEventListener("click", () => {
     kidSet.clear(); kidOrder = []; renderKid(); evaluate();
   });
@@ -661,5 +657,12 @@
   statsEl = $("stats");
   loadProgress();
   renderStats(false);
-  newPuzzle();
+
+  // 首屏出题。用 rAF 等一帧，确保布局就绪后再渲染，
+  // 避免个别浏览器首帧时 SVG（仅有 viewBox、靠 CSS width:100%）被算成 0 尺寸而看不到图形。
+  requestAnimationFrame(newPuzzle);
+  // 兜底：页面完全加载后若棋盘里仍没有图形，再补出一题。
+  window.addEventListener("load", () => {
+    if (!board.querySelector("svg")) newPuzzle();
+  });
 })();
